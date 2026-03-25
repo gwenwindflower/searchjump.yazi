@@ -208,12 +208,12 @@ local set_match_label = ya.sync(function(state, url, name, file)
 	else
 		table.insert(span, ui.Span(name:sub(1, startPos[1] - 1)):fg(state.opt_unmatch_fg))
 	end
-
+	-- TODO: using the first match label color to differentiate doesn't seem to be implemented?
 	while i <= #startPos do
 		table.insert(span,
 			ui.Span(name:sub(startPos[i], endPos[i])):fg(state.opt_match_str_fg):bg(state.opt_match_str_bg))
 		if i <= #key then
-			table.insert(span, ui.Span(key[i]):fg(state.opt_label_fg):bg(state.opt_label_bg))
+			table.insert(span, ui.Span(key[i]):fg(state.opt_label_fg):bg(state.opt_label_bg):bold())
 		end
 		if i + 1 <= #startPos then
 			if file.is_hovered then
