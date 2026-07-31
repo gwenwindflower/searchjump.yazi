@@ -2,13 +2,6 @@
 
 A Yazi plugin whose behavior is consistent with flash.nvim in Neovim: from a search string it generates labels to jump to.
 
-> [!NOTE]
-> This is a continuation of [DreamMaoMao/searchjump.yazi](https://github.com/DreamMaoMao/searchjump.yazi),
-> which is no longer maintained as a standalone repository. Maintenance
-> happens here now — issues and pull requests welcome. See [Credits](#credits).
-
-https://github.com/DreamMaoMao/searchjump.yazi/assets/30348075/4a00eb39-211b-47c5-8e22-644a7d7bc6b1
-
 ## Requirements
 
 The latest main branch of Yazi. The plugin uses `ya.emit`, `ui.printable` and
@@ -111,12 +104,19 @@ anything Yazi's theme files do: `#RRGGBB`, an ANSI name like `lightcyan`, or a
 
 you can extend map data from external data to map other languages to English letters for matching, such as Chinese data mapping tables:[sjch.yazi](https://github.com/DreamMaoMao/sjch.yazi).
 
-## Credits
+## About this fork
 
-Originally written by [DreamMaoMao](https://github.com/DreamMaoMao), who wrote
-the great majority of this code and whose commits make up most of the history
-here. Thanks also to the contributors to the original repository: TD-Sky,
-Milan Raicevic, and Aurélien Berra.
+This is a hard fork of [DreamMaoMao/searchjump.yazi](https://github.com/DreamMaoMao/searchjump.yazi),
+which is no longer maintained as a standalone repository. I like the plugin and
+wanted it to keep working against current Yazi, so I forked it and started
+making changes. That's the whole story — it isn't coordinated with the original
+author and isn't an official continuation of their work, just my own copy kept
+alive for my own use.
+
+The great majority of this code is [DreamMaoMao](https://github.com/DreamMaoMao)'s,
+and their commits make up most of the history here. Thanks also to the
+contributors to the original repository: TD-Sky, Milan Raicevic, and
+Aurélien Berra.
 
 MIT licensed — see [LICENSE](LICENSE), which retains the original copyright
 notice alongside the current one.
