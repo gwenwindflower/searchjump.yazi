@@ -1,33 +1,38 @@
-> I no longer maintain a separate plugin repository,refer my config
-https://github.com/DreamMaoMao/yazi-config
-
-
-
 # searchjump.yazi
 
 A Yazi plugin whose behavior is consistent with flash.nvim in Neovim: from a search string it generates labels to jump to.
 
+> [!NOTE]
+> This is a continuation of [DreamMaoMao/searchjump.yazi](https://github.com/DreamMaoMao/searchjump.yazi),
+> which is no longer maintained as a standalone repository. Maintenance
+> happens here now — issues and pull requests welcome. See [Credits](#credits).
+
 https://github.com/DreamMaoMao/searchjump.yazi/assets/30348075/4a00eb39-211b-47c5-8e22-644a7d7bc6b1
 
-> [!NOTE]
-> The latest main branch of Yazi is required at the moment.
+## Requirements
 
+The latest main branch of Yazi. The plugin uses `ya.emit`, `ui.printable` and
+the `th` theme API, none of which exist in older releases.
 
 ## Install
 
-### Linux
+With Yazi's package manager:
 
-```bash
-git clone https://github.com/DreamMaoMao/searchjump.yazi.git ~/.config/yazi/plugins/searchjump.yazi
+```sh
+ya pkg add gwenwindflower/searchjump
 ```
 
-### Windows
+Or manually — Linux and macOS:
 
-With `Powershell` :
+```bash
+git clone https://github.com/gwenwindflower/searchjump.yazi.git ~/.config/yazi/plugins/searchjump.yazi
+```
+
+Windows, with `Powershell`:
 
 ```powershell
 if (!(Test-Path $env:APPDATA\yazi\config\plugins\)) {mkdir $env:APPDATA\yazi\config\plugins\}
-git clone https://github.com/DreamMaoMao/searchjump.yazi.git $env:APPDATA\yazi\config\plugins\searchjump.yazi
+git clone https://github.com/gwenwindflower/searchjump.yazi.git $env:APPDATA\yazi\config\plugins\searchjump.yazi
 ```
 
 ## Usage
@@ -105,3 +110,13 @@ anything Yazi's theme files do: `#RRGGBB`, an ANSI name like `lightcyan`, or a
 256-color index.
 
 you can extend map data from external data to map other languages to English letters for matching, such as Chinese data mapping tables:[sjch.yazi](https://github.com/DreamMaoMao/sjch.yazi).
+
+## Credits
+
+Originally written by [DreamMaoMao](https://github.com/DreamMaoMao), who wrote
+the great majority of this code and whose commits make up most of the history
+here. Thanks also to the contributors to the original repository: TD-Sky,
+Milan Raicevic, and Aurélien Berra.
+
+MIT licensed — see [LICENSE](LICENSE), which retains the original copyright
+notice alongside the current one.
