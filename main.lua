@@ -1,605 +1,571 @@
--- stylua: ignore
+--- searchjump.yazi — flash.nvim style label jumping for Yazi.
+---
+--- Typing narrows the file list; every match grows a one-key label, and
+--- pressing that key jumps to it.
 
-local KEYS_label = {
+-- stylua: ignore
+local LABEL_KEYS = {
 	"j", "f", "d", "k", "l", "h", "g", "a", "s", "o", "i", "e", "u", "n", "c", "m", "r", "p", "b", "t", "w", "v", "x",
 	"y", "q", "z",
 	"I", "J", "L", "H", "A", "B", "Y", "D", "E", "F", "G", "Q", "R", "T",
 	"U", "V", "W", "X", "Z", "C", "K", "M", "N", "O", "P", "S",
 }
 
-local INPUT_KEY = {
-	"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W",
-	"X", "Y", "Z",
-
-	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
-	"o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2"
-, "3", "4", "5", "6", "7", "8", "9", "-", "_", ".", "<Esc>", "<Space>", "<Enter>", "<Backspace>"
+-- stylua: ignore
+local INPUT_KEYS = {
+	"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+	"N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+	"n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+	"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+	"-", "_", ".",
+	"<Esc>", "<Space>", "<Enter>", "<Backspace>",
 }
 
-local INPUT_CANDS = {
-	{ on = "A" }, { on = "B" }, { on = "C" }, { on = "D" }, { on = "E" },
-	{ on = "F" }, { on = "G" }, { on = "H" }, { on = "I" }, { on = "J" },
-	{ on = "K" }, { on = "L" }, { on = "M" }, { on = "N" }, { on = "O" },
-	{ on = "P" }, { on = "Q" }, { on = "R" }, { on = "S" }, { on = "T" },
-	{ on = "U" }, { on = "V" }, { on = "W" }, { on = "X" }, { on = "Y" },
-	{ on = "Z" },
+-- `ya.which()` reports the 1-based index of the candidate that was pressed, so
+-- deriving the candidates from `INPUT_KEYS` keeps the two lists in step.
+local INPUT_CANDS = {}
+for i, key in ipairs(INPUT_KEYS) do
+	INPUT_CANDS[i] = { on = key }
+end
 
-	{ on = "a" }, { on = "b" }, { on = "c" }, { on = "d" }, { on = "e" },
-	{ on = "f" }, { on = "g" }, { on = "h" }, { on = "i" }, { on = "j" },
-	{ on = "k" }, { on = "l" }, { on = "m" }, { on = "n" }, { on = "o" },
-	{ on = "p" }, { on = "q" }, { on = "r" }, { on = "s" }, { on = "t" },
-	{ on = "u" }, { on = "v" }, { on = "w" }, { on = "x" }, { on = "y" },
-	{ on = "z" }, { on = "0" }, { on = "1" }, { on = "2" }, { on = "3" },
-	{ on = "4" }, { on = "5" }, { on = "6" }, { on = "7" }, { on = "8" },
-	{ on = "9" }, { on = "-" }, { on = "_" }, { on = "." }, { on = "<Esc>" },
-	{ on = "<Space>" }, { on = "<Enter>" }, { on = "<Backspace>" }
+local DEFAULTS = {
+	mapdata = {},
+	only_current = false,
+	search_patterns = {},
+	show_search_in_statusbar = false,
+	auto_exit_when_unmatch = true,
+	enable_capital_label = false,
 }
 
+-- ---------------------------------------------------------------------------
+-- Colour
+--
+-- Colours are measured, not invented: the plugin reads the active theme and
+-- only computes the one value a theme can't supply — a label foreground that
+-- stays legible on whatever background the theme picked.
+-- ---------------------------------------------------------------------------
 
-local set_re_match = ya.sync(function(state, re_match)
-	state.re_match = re_match
-end)
+-- sRGB approximations of the 16 ANSI colours. These are used solely to
+-- *measure* luminance; the terminal still renders the theme's own colour.
+-- stylua: ignore
+local ANSI_RGB = {
+	black        = 0x000000, red          = 0x800000,
+	green        = 0x008000, yellow       = 0x808000,
+	blue         = 0x000080, magenta      = 0x800080,
+	cyan         = 0x008080, gray         = 0xc0c0c0,
+	darkgray     = 0x808080, lightred     = 0xff0000,
+	lightgreen   = 0x00ff00, lightyellow  = 0xffff00,
+	lightblue    = 0x0000ff, lightmagenta = 0xff00ff,
+	lightcyan    = 0x00ffff, white        = 0xffffff,
+}
 
-local get_re_match_state = ya.sync(function(state)
-	return state.re_match
-end)
+-- stylua: ignore
+local ANSI_ORDER = {
+	"black", "red", "green", "yellow", "blue", "magenta", "cyan", "gray",
+	"darkgray", "lightred", "lightgreen", "lightyellow", "lightblue", "lightmagenta", "lightcyan", "white",
+}
 
-local insert_next_char = ya.sync(function(state, next_char)
-	if next_char == nil then
-		return
-	end
+-- The aliases `ratatui` accepts in theme files, normalised to our key names.
+local ANSI_ALIASES = { grey = "gray", silver = "gray", lightblack = "darkgray", lightwhite = "white", lightgray = "white" }
 
-	if next_char:byte() > 127 then
-		if state.mapdata and state.mapdata[next_char] then
-			for i = 1, #state.mapdata[next_char] do
-				state.next_char[state.mapdata[next_char][i]] = ""
-			end
-		end
-	else
-		state.next_char[next_char] = ""
-	end
-end)
+-- Intensity levels of the xterm 6x6x6 colour cube.
+local CUBE = { 0, 95, 135, 175, 215, 255 }
 
-local check_is_match_char = function(target_char, extend_char_list)
-	for i = 1, #extend_char_list do
-		if target_char == extend_char_list[i] then
-			return true
-		end
-	end
-	return false
-end
-
-local function utf8_char_byte_length(char)
-	local code = utf8.codepoint(char)
-
-	if code <= 0x007F then
-		return 1
-	elseif code <= 0x07FF then
-		return 2
-	elseif code <= 0xFFFF then
-		return 3
-	else
-		return 4
-	end
-end
-
-local function get_match_position(state, name, find_str)
-	if find_str == "" or find_str == nil then
-		return nil, nil
-	end
-
-	local startPos, endPos = {}, {}
-	local startp, endp
-	name = string.lower(name)
-	local is_match_char = false
-
-	-- input mode
-	if not get_re_match_state() then
-		local i = 1
-		local j = 1
-		local real_start_pos = 0
-		local real_end_pos = 0
-		local real_index = 1
-		local char_wide = 1
-		find_str = string.lower(find_str)
-		local wide_char_name = {}
-		local wide_char_match_begin = 0
-		local index_wide_char
-		local extend_char_list
-		for utf8_char in string.gmatch(name, "[%z\1-\127\194-\244][\128-\191]*") do
-			table.insert(wide_char_name, utf8_char)
-		end
-		-- wide_char_name is the array of the multi-width character
-		-- after combining the elements of the array
-		-- so the real_index should be added 3 (Chinese)
-		while j <= #wide_char_name do
-			index_wide_char = wide_char_name[j]
-			extend_char_list = state.mapdata[index_wide_char]
-
-			char_wide = utf8_char_byte_length(index_wide_char)
-
-			if extend_char_list then
-				is_match_char = check_is_match_char(find_str:sub(i, i), extend_char_list)
-			else
-				is_match_char = find_str:sub(i, i) == index_wide_char
-			end
-
-			-- match the first char
-			if real_start_pos == 0 and is_match_char then
-				real_start_pos = real_index
-				wide_char_match_begin = j
-			end
-
-			if real_start_pos ~= 0 and is_match_char then
-				-- match the end char
-				if i == #find_str then
-					real_end_pos = real_index + (char_wide - 1)
-					table.insert(startPos, real_start_pos)
-					table.insert(endPos, real_end_pos)
-					insert_next_char(wide_char_name[j + 1])
-					i = 1
-					wide_char_match_begin = 0
-					real_end_pos = 0
-					real_start_pos = 0
-				else
-					i = i + 1
-				end
-				-- match failed, reset match begin index to the next char
-				-- of the first match char
-				real_index = real_index + char_wide
-			elseif real_start_pos ~= 0 and not is_match_char then
-				i = 1
-				j = wide_char_match_begin
-				real_index = real_start_pos + (wide_char_name[wide_char_match_begin]:byte() > 127 and 3 or 1)
-				real_start_pos = 0
-				wide_char_match_begin = 0
-			else
-				real_index = real_index + char_wide
-			end
-
-			-- update real_index
-			j = j + 1
-		end
-	else -- re match mode
-		endp = 0
-		while true do
-			startp, endp = string.find(name, find_str, endp + 1)
-			if not startp then
-				break
-			end
-			table.insert(startPos, startp)
-			table.insert(endPos, endp)
-		end
-	end
-
-	if #startPos > 0 then
-		return startPos, endPos
-	else
-		return nil, nil
-	end
-end
-
-local get_first_match_label = ya.sync(function(state)
-	if state.match == nil then
+--- Turn a colour as written in a theme (or a user option) into an RGB integer.
+--- Returns nil for `reset` and anything else that has no measurable value.
+---@param color string|nil
+---@return integer|nil
+local function resolve_rgb(color)
+	if type(color) ~= "string" then
 		return nil
 	end
 
-	for url, _ in pairs(state.match) do
-		return #state.match[url].key > 0 and state.match[url].key[1] or nil
+	local hex = color:match("^#(%x%x%x%x%x%x)$")
+	if hex then
+		return tonumber(hex, 16)
 	end
 
-	return nil
-end)
-
--- apply search result to show
-local set_match_label = ya.sync(function(state, url, name, file)
-	local span = {}
-	local key = {}
-	local i = 1
-	if state.match[url].key and #state.match[url].key > 0 then
-		key = state.match[url].key
-	end
-
-	local startPos = state.match[url].startPos
-	local endPos = state.match[url].endPos
-
-	if file.is_hovered then
-		table.insert(span, ui.Span(name:sub(1, startPos[1] - 1)))
-	else
-		table.insert(span, ui.Span(name:sub(1, startPos[1] - 1)):fg(state.opt_unmatch_fg))
-	end
-	-- TODO: using the first match label color to differentiate doesn't seem to be implemented?
-	while i <= #startPos do
-		table.insert(span,
-			ui.Span(name:sub(startPos[i], endPos[i])):fg(state.opt_match_str_fg):bg(state.opt_match_str_bg))
-		if i <= #key then
-			table.insert(span, ui.Span(key[i]):fg(state.opt_label_fg):bg(state.opt_label_bg):bold())
+	local idx = tonumber(color)
+	if idx and idx == math.floor(idx) and idx >= 0 and idx <= 255 then
+		if idx < 16 then
+			return ANSI_RGB[ANSI_ORDER[idx + 1]]
+		elseif idx < 232 then
+			local n = idx - 16
+			return CUBE[n // 36 + 1] * 0x10000 + CUBE[n % 36 // 6 + 1] * 0x100 + CUBE[n % 6 + 1]
+		else
+			local v = 8 + (idx - 232) * 10
+			return v * 0x10101
 		end
-		if i + 1 <= #startPos then
-			if file.is_hovered then
-				table.insert(span, ui.Span(name:sub(endPos[i] + 1, startPos[i + 1] - 1)))
-			else
-				table.insert(span, ui.Span(name:sub(endPos[i] + 1, startPos[i + 1] - 1)):fg(state.opt_unmatch_fg))
+	end
+
+	local name = color:lower():gsub("[%s%-_]", "")
+	name = name:gsub("^bright", "light")
+	return ANSI_RGB[ANSI_ALIASES[name] or name]
+end
+
+--- WCAG relative luminance, 0 (black) to 1 (white).
+---@param rgb integer
+---@return number
+local function luminance(rgb)
+	local function linear(c)
+		c = c / 255
+		return c <= 0.04045 and c / 12.92 or ((c + 0.055) / 1.055) ^ 2.4
+	end
+	return 0.2126 * linear(rgb >> 16 & 0xff) + 0.7152 * linear(rgb >> 8 & 0xff) + 0.0722 * linear(rgb & 0xff)
+end
+
+--- Pick whichever of black/white contrasts better with `rgb`. 0.179 is the
+--- luminance at which the two contrast ratios cross over, so this is the
+--- highest contrast a single foreground can reach against that background.
+---@param rgb integer
+---@return string
+local function readable_fg(rgb) return luminance(rgb) > 0.179 and "#000000" or "#ffffff" end
+
+--- Reduce a theme style to a solid, legible badge: its colour becomes the
+--- background, and the foreground is computed for maximum contrast.
+---@param style ui.Style
+---@return ui.Style
+local function badge(style)
+	local raw = style:raw()
+	local rgb = resolve_rgb(raw.bg) or resolve_rgb(raw.fg)
+	if not rgb then
+		-- The theme colour is `reset` (or something we can't measure), so its
+		-- luminance is unknown. Reversing it still guarantees the label's
+		-- foreground and background differ.
+		return ui.Style():patch(style):reverse(true):bold(true)
+	end
+
+	local bg = string.format("#%06x", rgb)
+	return ui.Style():bg(bg):fg(readable_fg(rgb)):bold(true)
+end
+
+--- Apply a user's fg/bg override, deriving whichever half they left out.
+---@param style ui.Style
+---@param fg string|nil
+---@param bg string|nil
+---@return ui.Style
+local function override(style, fg, bg)
+	if bg then
+		style = style:bg(bg)
+		if not fg then
+			local rgb = resolve_rgb(bg)
+			fg = rgb and readable_fg(rgb) or nil
+		end
+	end
+	return fg and style:fg(fg) or style
+end
+
+--- Resolve every style the overlay draws with, once per searchjump session so
+--- that a flavour switch is picked up the next time it is opened.
+---@param opts table
+---@return table
+local function build_styles(opts)
+	local styles = {
+		-- Everything that didn't match recedes. `dim` needs no colour of its
+		-- own, so it reads correctly against any flavour, light or dark.
+		unmatch = ui.Style():dim(true),
+		-- `mgr.find_keyword` is, by definition, "the highlighted portion of a
+		-- filename" — the same job the matched substring does here.
+		match = ui.Style():patch(th.mgr.find_keyword),
+		-- The match `<Enter>` would take, promoted to a solid badge.
+		first_match = badge(ui.Style():patch(th.mgr.find_keyword)),
+		-- `which.cand` is the accent a flavour reserves for "press this key",
+		-- which is exactly what a jump label is.
+		label = badge(ui.Style():patch(th.which.cand)),
+	}
+
+	if opts.unmatch_fg then
+		styles.unmatch = ui.Style():fg(opts.unmatch_fg)
+	end
+	styles.match = override(styles.match, opts.match_str_fg, opts.match_str_bg)
+	styles.first_match = override(styles.first_match, opts.first_match_str_fg, opts.first_match_str_bg)
+	styles.label = override(styles.label, opts.label_fg, opts.label_bg)
+	return styles
+end
+
+-- ---------------------------------------------------------------------------
+-- Matching
+--
+-- Everything below runs inside a `ya.sync` block already, so these are plain
+-- functions — wrapping them in `ya.sync` too would only add nested hops.
+-- ---------------------------------------------------------------------------
+
+--- Split a string into UTF-8 characters, recording the byte offset each one
+--- starts at so matches can be reported as byte ranges into the original.
+---@param s string
+---@return string[] chars, integer[] offsets, integer count
+local function utf8_chars(s)
+	local chars, offsets, n, pos = {}, {}, 0, 1
+	for char in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+		n = n + 1
+		chars[n], offsets[n] = char, pos
+		pos = pos + #char
+	end
+	return chars, offsets, n
+end
+
+--- `mapdata` maps a non-ASCII character to the latin letters that should match
+--- it. Flip each list into a set once so matching is a lookup, not a scan.
+---@return table|nil
+local function extend_set(st, char)
+	local cached = st.extend_cache[char]
+	if cached ~= nil then
+		return cached or nil
+	end
+
+	local list = st.opts.mapdata[char]
+	if not list then
+		st.extend_cache[char] = false
+		return nil
+	end
+
+	local set = {}
+	for i = 1, #list do
+		set[list[i]] = true
+	end
+	st.extend_cache[char] = set
+	return set
+end
+
+--- The character right after a match is what the user would type next, so it
+--- must not double as a label key.
+local function reserve_next_char(st, char)
+	if not char then
+		return
+	elseif #char == 1 then
+		st.next_char[char] = true
+		return
+	end
+
+	local list = st.opts.mapdata[char]
+	for i = 1, list and #list or 0 do
+		st.next_char[list[i]] = true
+	end
+end
+
+--- Literal (as-typed) matching, honouring `mapdata` so that e.g. a Chinese
+--- character can be reached by its pinyin initial.
+---@return integer[] starts, integer[] ends
+local function match_literal(st, name, needle)
+	local chars, offsets, n = utf8_chars(name)
+	local starts, ends = {}, {}
+	local i, j, begin_at = 1, 1, 0 -- i: index into `needle`, j: into `chars`
+
+	while j <= n do
+		local char = chars[j]
+		local set = extend_set(st, char)
+		local want = needle:sub(i, i)
+		local hit = set and set[want] == true or (not set and want == char)
+
+		if hit then
+			if begin_at == 0 then
+				begin_at = j
 			end
+			if i == #needle then
+				starts[#starts + 1] = offsets[begin_at]
+				ends[#ends + 1] = offsets[j] + #char - 1
+				reserve_next_char(st, chars[j + 1])
+				i, begin_at = 1, 0
+			else
+				i = i + 1
+			end
+			j = j + 1
+		elseif begin_at ~= 0 then
+			-- The run died partway; retry from the character after the one
+			-- that started it, in case a shorter run begins there.
+			j, i, begin_at = begin_at + 1, 1, 0
+		else
+			j = j + 1
 		end
-		i = i + 1
 	end
 
-	if file.is_hovered then
-		table.insert(span, ui.Span(name:sub(endPos[i - 1] + 1, #name)))
-	else
-		table.insert(span, ui.Span(name:sub(endPos[i - 1] + 1, #name)):fg(state.opt_unmatch_fg))
-	end
-	return span
-end)
+	return starts, ends
+end
 
--- update the match data after input a str
-local update_match_table = ya.sync(function(state, pane, folder, convert_pattern)
+--- Lua-pattern matching, used for the presets bound to `<Space>`.
+---@return integer[] starts, integer[] ends
+local function match_pattern(name, pattern)
+	local starts, ends, from = {}, {}, 1
+	while true do
+		local s, e = name:find(pattern, from)
+		if not s then
+			return starts, ends
+		end
+		starts[#starts + 1], ends[#ends + 1] = s, e
+		from = e >= s and e + 1 or s + 1 -- a zero-width match must still advance
+	end
+end
+
+--- Record every file in one pane that matches any of `patterns`.
+local function scan_pane(st, pane, folder, patterns)
 	if not folder then
 		return
 	end
 
-	local i
+	for cursor, file in ipairs(folder.window) do
+		local name = tostring(ui.printable(file.name)):lower()
+		for _, pattern in ipairs(patterns) do
+			if pattern ~= "" then
+				local starts, ends
+				if st.re_match then
+					starts, ends = match_pattern(name, pattern)
+				else
+					starts, ends = match_literal(st, name, pattern)
+				end
 
-	for i, file in ipairs(folder.window) do
-		local name = file.name:gsub("\r", "?", 1)
-		local url = tostring(file.url)
-		local startPos, endPos = get_match_position(state, name, convert_pattern)
-		if startPos then
-			-- record match file data
-			state.match[url] = {
-				key = {},
-				startPos = startPos,
-				endPos = endPos,
-				isdir = file.cha.is_dir,
-				pane = pane,
-				cursorPos = i,
-			}
+				if #starts > 0 then
+					local url = tostring(file.url)
+					st.match[url] = {
+						url = url,
+						keys = {},
+						starts = starts,
+						ends = ends,
+						is_dir = file.cha.is_dir,
+						pane = pane,
+						cursor = cursor,
+					}
+					-- `pairs()` order is arbitrary, so the visual order the
+					-- labels are handed out in is tracked separately.
+					st.order[#st.order + 1] = url
+					break -- first pattern to hit wins
+				end
+			end
 		end
 	end
-end)
+end
 
-local record_match_file = ya.sync(function(state, patterns)
-	local exist_match = false
+--- Recompute the whole overlay for the current input.
+---@return boolean matched
+local function rebuild(st, patterns)
+	st.match, st.order, st.labels, st.next_char, st.first = {}, {}, {}, {}, nil
 
-	if state.match == nil then
-		state.match = {}
+	-- Current pane first so the earliest, easiest labels land where the user is
+	-- already looking.
+	scan_pane(st, "current", cx.active.current, patterns)
+	if not st.opts.only_current then
+		scan_pane(st, "parent", cx.active.parent, patterns)
+		scan_pane(st, "preview", cx.active.preview.folder, patterns)
 	end
 
-	if state.next_char == nil then
-		state.next_char = {}
+	if #st.order == 0 then
+		return false
 	end
+	st.first = st.match[st.order[1]]
 
-	for _, pattern in ipairs(patterns) do
-		-- record match file from current window
-		update_match_table("current", cx.active.current, pattern)
-
-		if not state.opt_only_current then
-			-- record match file from parent window
-			update_match_table("parent", cx.active.parent, pattern)
-			-- record match file from preview window
-			update_match_table("preview", cx.active.preview.folder, pattern)
-		end
-	end
-
-	-- get valid key list (KEYS_label but exclude state.next_char table)
-	local valid_label = {}
-	for _, value in ipairs(KEYS_label) do
-		if not state.opt_enable_capital_label and string.byte(value) > 64 and string.byte(value) < 91 then
-			goto nextlabel
-		end
-
-		if state.next_char[string.lower(value)] == nil then
-			table.insert(valid_label, value)
-		end
-
-		::nextlabel::
-	end
-
-	-- assign valid key to each match file
-	local i = 1
-	local j
-	for url, _ in pairs(state.match) do
-		exist_match = true
-		j = 1
-		while j <= #state.match[url].startPos do -- some file may match multi position
-			table.insert(state.match[url].key, valid_label[i])
-			i = i + 1
-			j = j + 1
-		end
-	end
-
-	-- flush page
-	if cx.active.preview.folder then
-		ya.mgr_emit("peek", { force = true })
-	end
-
-	ui.render()
-
-	return exist_match
-end)
-
-local toggle_ui = ya.sync(function(st)
-	if st.highlights or st.status_sj_id then
-		Status:children_remove(st.status_sj_id)
-		Entity.highlights, st.highlights, st.status_sj_id = st.highlights, nil, nil
-		if cx.active.preview.folder then
-			ya.mgr_emit("peek", { force = true })
-		end
-		ui.render()
-		return
-	end
-
-	st.highlights = Entity.highlights
-
-	Entity.highlights = function(self)
-		local file = self._file
-		local spans = {}
-		local name = file.name:gsub("\r", "?", 1)
-
-		local url = tostring(file.url)
-
-		if st.match and st.match[url] then
-			spans = set_match_label(url, name, file)
-		elseif file.is_hovered then
-			spans = { ui.Span(name) }
-		else
-			spans = { ui.Span(name):fg(st.opt_unmatch_fg) }
-		end
-
-		return ui.Line(spans)
-	end
-
-	local function status_sj(self)
-		local style = self:style()
-		local match_pattern = (st.match_pattern and st.opt_show_search_in_statusbar) and ":" .. st.match_pattern or ""
-		return ui.Line {
-			ui.Span("[SJ]" .. match_pattern .. " "):style(style.main),
-		}
-	end
-	st.status_sj_id = Status:children_add(status_sj, 1001, Status.LEFT)
-
-	if cx.active.preview.folder then
-		ya.mgr_emit("peek", { force = true })
-	end
-end)
-
-local check_key_is_label = ya.sync(function(state, final_input_str)
-	if state.backouting then
-		state.backouting = false
-		return nil
-	end
-
-	if not state.match then
-		return nil
-	end
-
-	for url, _ in pairs(state.match) do
-		for _, value in ipairs(state.match[url].key) do
-			if value == final_input_str then
-				return url
+	-- Label keys the user hasn't already ruled out by typing towards them.
+	local free = {}
+	for _, key in ipairs(LABEL_KEYS) do
+		if st.opts.enable_capital_label or not key:match("%u") then
+			if not st.next_char[key:lower()] then
+				free[#free + 1] = key
 			end
 		end
 	end
 
-	return nil
-end)
-
-local set_target_str = ya.sync(function(state, patterns, final_input_str)
-	local url = check_key_is_label(final_input_str)
-	if url then                                                        -- if the last str match is a label key, not a searchchar,toggle jump action
-		if not state.args_autocd and state.match[url].pane == "current" then -- if target file in current pane, use `arrow` instead of`reveal` tosupport select mode
-			local folder = cx.active.current
-			ya.mgr_emit("arrow", { state.match[url].cursorPos - folder.cursor - 1 + folder.offset })
-		elseif state.args_autocd and state.match[url].isdir then
-			ya.mgr_emit("cd", { url })
-		else
-			ya.mgr_emit("reveal", { url })
+	local n = 0
+	for _, url in ipairs(st.order) do
+		local m = st.match[url]
+		for k = 1, #m.starts do
+			n = n + 1
+			local key = free[n]
+			if not key then
+				return true -- ran out of labels; the rest stay unlabelled
+			end
+			m.keys[k] = key
+			st.labels[key] = m
 		end
-		-- two args is (want_exit,is_match)
-		return true, true
 	end
 
-	-- clears the previously calculated data when input change
-	state.match = nil
-	state.next_char = nil
+	return true
+end
 
-	-- calculate match data
-	local exist_match = record_match_file(patterns)
+-- ---------------------------------------------------------------------------
+-- Rendering
+-- ---------------------------------------------------------------------------
 
-	-- apply match data to render
+--- Build the filename line for one file, with matches highlighted, labels
+--- appended, and everything else pushed into the background.
+---@return ui.Line
+local function render_name(st, file)
+	local name = tostring(ui.printable(file.name))
+	local m = st.match and st.match[tostring(file.url)]
+
+	-- The hovered row already carries the indicator style; dimming it on top
+	-- would fight that, so it is left alone.
+	local function plain(text)
+		return file.is_hovered and ui.Span(text) or ui.Span(text):style(st.styles.unmatch)
+	end
+
+	if not m then
+		return ui.Line { plain(name) }
+	end
+
+	local spans, last = {}, 0
+	for k = 1, #m.starts do
+		local s, e = m.starts[k], m.ends[k]
+		if s > last + 1 then
+			spans[#spans + 1] = plain(name:sub(last + 1, s - 1))
+		end
+
+		local first = m == st.first and k == 1
+		spans[#spans + 1] = ui.Span(name:sub(s, e)):style(first and st.styles.first_match or st.styles.match)
+		if m.keys[k] then
+			spans[#spans + 1] = ui.Span(m.keys[k]):style(st.styles.label)
+		end
+		last = e
+	end
+	if last < #name then
+		spans[#spans + 1] = plain(name:sub(last + 1))
+	end
+
+	return ui.Line(spans)
+end
+
+--- Repaint. The preview pane only picks up new styles when it is re-peeked.
+local function flush()
+	if cx.active.preview.folder then
+		ya.emit("peek", { force = true })
+	end
 	ui.render()
-	if not exist_match and (state.re_match or patterns[1] ~= "") and state.opt_auto_exit_when_unmatch then
-		return true, exist_match
+end
+
+local enter_ui = ya.sync(function(st, args)
+	st.opts = st.opts or {}
+	for k, v in pairs(DEFAULTS) do
+		if st.opts[k] == nil then
+			st.opts[k] = v
+		end
+	end
+
+	st.autocd = args[1] == "autocd"
+	st.styles = build_styles(st.opts)
+	st.extend_cache = {}
+	st.re_match = false
+
+	st.saved_highlights = Entity.highlights
+	Entity.highlights = function(self) return render_name(st, self._file) end
+
+	st.status_id = Status:children_add(function(self)
+		local shown = st.opts.show_search_in_statusbar and st.match_pattern
+		return ui.Line { ui.Span("[SJ]" .. (shown and ":" .. shown or "") .. " "):style(self:style().main) }
+	end, 1001, Status.LEFT)
+
+	flush()
+	return st.opts.search_patterns
+end)
+
+local leave_ui = ya.sync(function(st)
+	Entity.highlights = st.saved_highlights
+	Status:children_remove(st.status_id, Status.LEFT)
+
+	st.saved_highlights, st.status_id = nil, nil
+	st.match, st.order, st.labels, st.next_char, st.first, st.match_pattern = nil, nil, nil, nil, nil, nil
+
+	flush()
+end)
+
+-- ---------------------------------------------------------------------------
+-- Input
+-- ---------------------------------------------------------------------------
+
+local function jump(st, m)
+	if not st.autocd and m.pane == "current" then
+		-- `arrow` keeps visual-mode selection alive, which `reveal` would drop.
+		local folder = cx.active.current
+		ya.emit("arrow", { m.cursor - folder.cursor - 1 + folder.offset })
+	elseif st.autocd and m.is_dir then
+		ya.emit("cd", { m.url })
 	else
-		return false, exist_match
+		ya.emit("reveal", { m.url })
 	end
-end)
+end
 
-local clear_state_str = ya.sync(function(state)
-	state.match = nil
-	state.next_char = nil
-	state.backouting = nil
-	state.match_pattern = nil
-	ui.render()
-end)
-
-local backout_last_input = ya.sync(function(state, input_str)
-	local final_input_str = input_str:sub(-2, -2)
-	input_str = input_str:sub(1, -2)
-
-	state.backouting = true
-	state.match_pattern = input_str
-	ui.render()
-	return input_str, final_input_str
-end)
-
-local flush_input_key_in_statusbar = ya.sync(function(state, input_str)
-	if state.re_match then
-		state.match_pattern = "[~]"
-	else
-		state.match_pattern = input_str
-	end
-	ui.render()
-end)
-
-local set_args_default = ya.sync(function(state, args)
-	if (args[1] ~= nil and args[1] == "autocd") then
-		state.args_autocd = true
-	else
-		state.args_autocd = false
-	end
-end)
-
-local set_opts_default = ya.sync(function(state)
-	if (state.mapdata == nil) then
-		state.mapdata = {}
+--- Handle one keystroke: jump if it named a label, otherwise re-search.
+---
+--- This is the only sync hop per keypress, so the whole state update — label
+--- lookup, rematch, status bar, repaint — happens in one crossing.
+---@return boolean want_exit, boolean matched
+local commit = ya.sync(function(st, patterns, key, input, re, backout)
+	if key == "<Enter>" then
+		if st.first then
+			jump(st, st.first)
+			return true, true
+		end
+		return true, false
 	end
 
-	if (state.opt_unmatch_fg == nil) then
-		state.opt_unmatch_fg = "#b2a496"
+	-- After a backspace the "last key" is the character just deleted; it must
+	-- not be read as a label press.
+	if not backout and st.labels then
+		local target = st.labels[key]
+		if target then
+			jump(st, target)
+			return true, true
+		end
 	end
-	if (state.opt_match_str_fg == nil) then
-		state.opt_match_str_fg = "#000000"
+
+	st.re_match = re
+	st.match_pattern = re and "[~]" or input
+
+	local matched = rebuild(st, patterns)
+	flush()
+
+	if not matched and (re or input ~= "") and st.opts.auto_exit_when_unmatch then
+		return true, false
 	end
-	if (state.opt_match_str_bg == nil) then
-		state.opt_match_str_bg = "#73AC3A"
-	end
-	if (state.opt_first_match_str_fg == nil) then
-		state.opt_first_match_str_fg = "#000000"
-	end
-	if (state.opt_first_match_str_bg == nil) then
-		state.opt_first_match_str_bg = "#73AC3A"
-	end
-	if (state.opt_label_fg == nil) then
-		state.opt_label_fg = "#EADFC8"
-	end
-	if (state.opt_label_bg == nil) then
-		state.opt_label_bg = "#BA603D"
-	end
-	if (state.opt_only_current == nil) then
-		state.opt_only_current = false
-	end
-	if (state.opt_search_patterns == nil) then
-		state.opt_search_patterns = {}
-	end
-	if (state.opt_show_search_in_statusbar == nil) then
-		state.opt_show_search_in_statusbar = false
-	end
-	if (state.opt_auto_exit_when_unmatch == nil) then
-		state.opt_auto_exit_when_unmatch = true
-	end
-	if (state.opt_enable_capital_label == nil) then
-		state.opt_enable_capital_label = false
-	end
-	return state.opt_search_patterns
+	return false, matched
 end)
 
 return {
-	setup = function(state, opts)
-		-- Save the user configuration to the plugin's state
-
-		if (opts ~= nil and opts.mapdata ~= nil) then
-			state.mapdata = opts.mapdata
-		end
-
-		if (opts ~= nil and opts.unmatch_fg ~= nil) then
-			state.opt_unmatch_fg = opts.unmatch_fg
-		end
-		if (opts ~= nil and opts.match_str_fg ~= nil) then
-			state.opt_match_str_fg = opts.match_str_fg
-		end
-		if (opts ~= nil and opts.match_str_bg ~= nil) then
-			state.opt_match_str_bg = opts.match_str_bg
-		end
-		if (opts ~= nil and opts.first_match_str_fg ~= nil) then
-			state.opt_first_match_str_fg = opts.first_match_str_fg
-		end
-		if (opts ~= nil and opts.first_match_str_bg ~= nil) then
-			state.opt_first_match_str_bg = opts.first_match_str_bg
-		end
-		if (opts ~= nil and opts.label_fg ~= nil) then
-			state.opt_label_fg = opts.label_fg
-		end
-		if (opts ~= nil and opts.label_bg ~= nil) then
-			state.opt_label_bg = opts.label_bg
-		end
-
-		if (opts ~= nil and opts.only_current ~= nil) then
-			state.opt_only_current = opts.only_current
-		end
-		if (opts ~= nil and opts.search_patterns ~= nil) then
-			state.opt_search_patterns = opts.search_patterns
-		end
-		if (opts ~= nil and opts.show_search_in_statusbar ~= nil) then
-			state.opt_show_search_in_statusbar = opts.show_search_in_statusbar
-		end
-		if (opts ~= nil and opts.auto_exit_when_unmatch ~= nil) then
-			state.opt_auto_exit_when_unmatch = opts.auto_exit_when_unmatch
-		end
-		if (opts ~= nil and opts.enable_capital_label ~= nil) then
-			state.opt_enable_capital_label = opts.enable_capital_label
-		end
-	end,
+	setup = function(state, opts) state.opts = opts or {} end,
 
 	entry = function(_, job)
-		local opt_search_patterns = set_opts_default()
-		set_args_default(job.args)
+		local presets = enter_ui(job.args)
 
-		toggle_ui()
-
-		local input_str = ""
-		local patterns = {}
-		local final_input_str = ""
+		local input, key, patterns, re, backout = "", "", {}, false, false
 		while true do
 			local cand = ya.which { cands = INPUT_CANDS, silent = true }
-			if cand == nil then
+			local pressed = cand and INPUT_KEYS[cand]
+
+			if pressed == "<Esc>" then
+				break
+			elseif pressed == nil then
+				goto continue
+			elseif pressed == "<Enter>" then
+				key, patterns, backout = "<Enter>", {}, false
+			elseif pressed == "<Space>" then
+				key, input, patterns, re, backout = "", "", presets, true, false
+			elseif pressed == "<Backspace>" then
+				key, input = input:sub(-1), input:sub(1, -2)
+				patterns, re, backout = { input }, false, true
+			else
+				key = pressed
+				input = input .. pressed:lower()
+				patterns, re, backout = { input }, false, false
+			end
+
+			::retry::
+			local want_exit, matched = commit(patterns, key, input, re, backout)
+			if want_exit then
+				break
+			elseif matched then
+				goto continue
+			elseif re then
+				break -- a preset that matches nothing has nothing to fall back to
+			elseif input == "" then
 				goto continue
 			end
 
-			if INPUT_KEY[cand] == "<Esc>" then
-				break
-			end
+			-- Nothing matched: drop the character that broke the search and
+			-- fall back to the previous, still-matching state.
+			key, input = input:sub(-1), input:sub(1, -2)
+			patterns, backout = { input }, true
+			goto retry
 
-			if INPUT_KEY[cand] == "<Enter>" then
-				final_input_str = get_first_match_label()
-				patterns = ""
-			elseif INPUT_KEY[cand] == "<Space>" then
-				final_input_str = ""
-				input_str = ""
-				patterns = opt_search_patterns
-				set_re_match(true)
-			elseif INPUT_KEY[cand] == "<Backspace>" then
-				input_str, final_input_str = backout_last_input(input_str)
-				patterns = { input_str }
-				set_re_match(false)
-			else
-				final_input_str = INPUT_KEY[cand]
-				input_str = input_str .. string.lower(INPUT_KEY[cand])
-				patterns = { input_str }
-				set_re_match(false)
-			end
-
-			::reset::
-			flush_input_key_in_statusbar(input_str)
-
-			local want_exit, is_match = set_target_str(patterns, final_input_str)
-			if want_exit then
-				break
-			end
-
-			-- If the string after the entered character does not match anything, -- then the string input is cancelled and keep the previous input matches status
-			if not is_match and get_re_match_state() then
-				break
-			elseif not is_match and input_str ~= "" then
-				input_str, final_input_str = backout_last_input(input_str)
-				patterns = { input_str }
-				goto reset
-			end
 			::continue::
 		end
 
-		clear_state_str()
-		toggle_ui()
-	end
+		leave_ui()
+	end,
 }
