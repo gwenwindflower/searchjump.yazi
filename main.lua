@@ -19,7 +19,7 @@ local INPUT_KEYS = {
 	"n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
 	"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
 	"-", "_", ".",
-	"<Esc>", "<Space>", "<Enter>", "<Backspace>",
+	"<Esc>", "<Space>", "<Enter>", "<Backspace>", "<C-n>", "<C-p>",
 }
 
 -- `ya.which()` reports the 1-based index of the candidate that was pressed, so
@@ -328,6 +328,9 @@ local function scan_pane(st, pane, folder, patterns)
 					-- `pairs()` order is arbitrary, so the visual order the
 					-- labels are handed out in is tracked separately.
 					st.order[#st.order + 1] = url
+					if pane == "current" then
+						st.current_order[#st.current_order + 1] = url
+					end
 					break -- first pattern to hit wins
 				end
 			end
@@ -338,7 +341,8 @@ end
 --- Recompute the whole overlay for the current input.
 ---@return boolean matched
 local function rebuild(st, patterns)
-	st.match, st.order, st.labels, st.next_char, st.first = {}, {}, {}, {}, nil
+	st.match, st.order, st.current_order, st.labels, st.next_char = {}, {}, {}, {}, {}
+	st.active, st.active_idx = nil, nil
 
 	-- Current pane first so the earliest, easiest labels land where the user is
 	-- already looking.
@@ -351,7 +355,12 @@ local function rebuild(st, patterns)
 	if #st.order == 0 then
 		return false
 	end
-	st.first = st.match[st.order[1]]
+	if #st.current_order > 0 then
+		st.active_idx = 1
+		st.active = st.match[st.current_order[1]]
+	else
+		st.active = st.match[st.order[1]]
+	end
 
 	-- Label keys the user hasn't already ruled out by typing towards them.
 	local free = {}
@@ -408,8 +417,8 @@ local function render_name(st, file)
 			spans[#spans + 1] = plain(name:sub(last + 1, s - 1))
 		end
 
-		local first = m == st.first and k == 1
-		spans[#spans + 1] = ui.Span(name:sub(s, e)):style(first and st.styles.first_match or st.styles.match)
+		local active = m == st.active and k == 1
+		spans[#spans + 1] = ui.Span(name:sub(s, e)):style(active and st.styles.first_match or st.styles.match)
 		if m.keys[k] then
 			spans[#spans + 1] = ui.Span(m.keys[k]):style(st.styles.label)
 		end
@@ -420,6 +429,20 @@ local function render_name(st, file)
 	end
 
 	return ui.Line(spans)
+end
+
+local function render_position(st, file)
+	if not file.is_hovered or not st.active_idx or not st.current_order then
+		return ""
+	end
+
+	local m = st.match and st.match[tostring(file.url)]
+	if m ~= st.active or st.active_idx > 99 then
+		return ""
+	end
+
+	local total = #st.current_order >= 100 and "99+" or #st.current_order
+	return ui.Line { "  ", ui.Span(string.format("[%d/%s]", st.active_idx, total)):style(th.mgr.find_position) }
 end
 
 --- Repaint. The preview pane only picks up new styles when it is re-peeked.
@@ -445,6 +468,9 @@ local enter_ui = ya.sync(function(st, args)
 
 	st.saved_highlights = Entity.highlights
 	Entity.highlights = function(self) return render_name(st, self._file) end
+	st.position_id = Entity:children_add(function(self)
+		return render_position(st, self._file)
+	end, 5001)
 
 	st.status_id = Status:children_add(function(self)
 		local shown = st.opts.show_search_in_statusbar and st.match_pattern
@@ -457,10 +483,12 @@ end)
 
 local leave_ui = ya.sync(function(st)
 	Entity.highlights = st.saved_highlights
+	Entity:children_remove(st.position_id)
 	Status:children_remove(st.status_id, Status.LEFT)
 
-	st.saved_highlights, st.status_id = nil, nil
-	st.match, st.order, st.labels, st.next_char, st.first, st.match_pattern = nil, nil, nil, nil, nil, nil
+	st.saved_highlights, st.position_id, st.status_id = nil, nil, nil
+	st.match, st.order, st.current_order, st.labels, st.next_char = nil, nil, nil, nil, nil
+	st.active, st.active_idx, st.match_pattern = nil, nil, nil
 
 	flush()
 end)
@@ -481,6 +509,39 @@ local function jump(st, m)
 	end
 end
 
+local function navigate(st, previous)
+	local total = st.current_order and #st.current_order or 0
+	if total == 0 then
+		return
+	end
+
+	local folder = cx.active.current
+	local hovered = folder.cursor + 1 - folder.offset
+	local target_idx = previous and total or 1
+	if previous then
+		for i = total, 1, -1 do
+			if st.match[st.current_order[i]].cursor < hovered then
+				target_idx = i
+				break
+			end
+		end
+	else
+		for i = 1, total do
+			if st.match[st.current_order[i]].cursor > hovered then
+				target_idx = i
+				break
+			end
+		end
+	end
+
+	st.active_idx = target_idx
+	st.active = st.match[st.current_order[st.active_idx]]
+	local offset = st.active.cursor - folder.cursor - 1 + folder.offset
+	if offset ~= 0 then
+		ya.emit("arrow", { offset })
+	end
+end
+
 --- Handle one keystroke: jump if it named a label, otherwise re-search.
 ---
 --- This is the only sync hop per keypress, so the whole state update — label
@@ -488,11 +549,17 @@ end
 ---@return boolean want_exit, boolean matched
 local commit = ya.sync(function(st, patterns, key, input, re, backout)
 	if key == "<Enter>" then
-		if st.first then
-			jump(st, st.first)
+		if st.active then
+			jump(st, st.active)
 			return true, true
 		end
 		return true, false
+	end
+
+	if key == "<C-n>" or key == "<C-p>" then
+		navigate(st, key == "<C-p>")
+		flush()
+		return false, st.order and #st.order > 0 or false
 	end
 
 	-- After a backspace the "last key" is the character just deleted; it must
@@ -539,6 +606,8 @@ return {
 			elseif pressed == "<Backspace>" then
 				key, input = input:sub(-1), input:sub(1, -2)
 				patterns, re, backout = { input }, false, true
+			elseif pressed == "<C-n>" or pressed == "<C-p>" then
+				key, backout = pressed, false
 			else
 				key = pressed
 				input = input .. pressed:lower()
