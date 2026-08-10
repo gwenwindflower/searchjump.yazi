@@ -228,6 +228,11 @@ local function extend_set(st, char)
 	return set
 end
 
+local function matches_input(st, char, want)
+	local set = extend_set(st, char)
+	return set and set[want] == true or (not set and want == char)
+end
+
 --- The character right after a match is what the user would type next, so it
 --- must not double as a label key.
 local function reserve_next_char(st, char)
@@ -244,6 +249,23 @@ local function reserve_next_char(st, char)
 	end
 end
 
+local function reserve_continuations(st, name, needle)
+	local chars, _, n = utf8_chars(name)
+	local needle_length = #needle
+	for start = 1, n - needle_length do
+		local matched = true
+		for i = 1, needle_length do
+			if not matches_input(st, chars[start + i - 1], needle:sub(i, i)) then
+				matched = false
+				break
+			end
+		end
+		if matched then
+			reserve_next_char(st, chars[start + needle_length])
+		end
+	end
+end
+
 --- Literal (as-typed) matching, honouring `mapdata` so that e.g. a Chinese
 --- character can be reached by its pinyin initial.
 ---@return integer[] starts, integer[] ends
@@ -251,12 +273,12 @@ local function match_literal(st, name, needle)
 	local chars, offsets, n = utf8_chars(name)
 	local starts, ends = {}, {}
 	local i, j, begin_at = 1, 1, 0 -- i: index into `needle`, j: into `chars`
+	reserve_continuations(st, name, needle)
 
 	while j <= n do
 		local char = chars[j]
-		local set = extend_set(st, char)
 		local want = needle:sub(i, i)
-		local hit = set and set[want] == true or (not set and want == char)
+		local hit = matches_input(st, char, want)
 
 		if hit then
 			if begin_at == 0 then
@@ -265,7 +287,6 @@ local function match_literal(st, name, needle)
 			if i == #needle then
 				starts[#starts + 1] = offsets[begin_at]
 				ends[#ends + 1] = offsets[j] + #char - 1
-				reserve_next_char(st, chars[j + 1])
 				i, begin_at = 1, 0
 			else
 				i = i + 1

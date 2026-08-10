@@ -49,6 +49,7 @@ desc = "searchjump mode"
 ```
 
 - When you see the single character label at the right of an entry, press the corresponding key to jump to the entry.
+- A key that can continue the current search is never used as a label, so you can keep typing without accidentally jumping.
 - you can use `backspace` to delete a input character.
 - you can use `enter` to jump to the first match — the topmost one in the current pane.
 - use `Ctrl-n` and `Ctrl-p` to move forward and backward through current-pane matches. Navigation wraps and shows `[current/total]` on the active match.

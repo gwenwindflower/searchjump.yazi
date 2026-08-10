@@ -188,4 +188,12 @@ local single_arrows, single_positions = run(
 sequence(single_arrows, { 2 }, "single-match navigation targets")
 sequence(single_positions, { "  [1/1]", "  [1/1]" }, "single-match positions")
 
+local overlapping_arrows = run({ "a", "b", "a", "j", "<Esc>" }, { "aBaBaJ" }, {})
+
+sequence(overlapping_arrows, {}, "case-insensitive overlapping continuations remain searchable")
+
+local label_arrows = run({ "a", "j" }, { "alpha" }, {})
+
+sequence(label_arrows, { 1 }, "safe labels remain selectable")
+
 print("navigation tests passed")
